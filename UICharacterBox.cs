@@ -61,23 +61,28 @@ public partial class UICharacterBox : UIElement
             {
                 _fileName.CurrentString = _oldName;
                 SoundEngine.PlaySound(SoundID.Item62);
+                return;
             }
-            else
-            {
-                if (_oldName != _fileName.CurrentString)
-                {
-                    SoundEngine.PlaySound(SoundID.ResearchComplete);
-                    File.Move(Path.Combine(path, _oldName + ".json"), Path.Combine(path, _fileName.CurrentString + ".json"));
-                    CharCreationPreset.FavoritedPresets.Remove(_oldName);
-                    CharCreationPreset.FavoritedPresets.Add(_fileName.CurrentString);
-                    CharCreationPreset.SaveFavoritePresets();
-                    _oldName = _fileName.CurrentString;
-                    CharCreationPreset.pendingUpdatePreset = true;
 
+
+            if (_oldName != _fileName.CurrentString)
+            {
+                foreach (var fileName in Directory.GetFiles(path))
+                {
+                    if (Path.GetFileNameWithoutExtension(fileName) == _fileName.CurrentString) 
+                    {
+                        _fileName.CurrentString = _oldName;
+                        SoundEngine.PlaySound(SoundID.Item62);
+                        return;
+                    }
                 }
-                else
-                    if (_fileName.Focused)
-                    SoundEngine.PlaySound(SoundID.MenuClose);
+                    SoundEngine.PlaySound(SoundID.ResearchComplete);
+                File.Move(Path.Combine(path, _oldName + ".json"), Path.Combine(path, _fileName.CurrentString + ".json"));
+                if (CharCreationPreset.FavoritedPresets.Remove(_oldName))
+                    CharCreationPreset.FavoritedPresets.Add(_fileName.CurrentString);
+                CharCreationPreset.SaveFavoritePresets();
+                _oldName = _fileName.CurrentString;
+                CharCreationPreset.pendingUpdatePreset = true;
 
             }
         };
