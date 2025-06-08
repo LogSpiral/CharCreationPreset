@@ -1,0 +1,4 @@
+displayName = 角色创建预设CharCreationPreset
+author = 预制螺线
+version = 0.1.0.2
+side = Client
