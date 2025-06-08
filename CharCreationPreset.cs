@@ -13,17 +13,14 @@ using Terraria.Localization;
 using Terraria.ModLoader;
 using Terraria.ModLoader.UI.Elements;
 using Terraria.UI;
-using System.Globalization;
 using System.Linq;
 using System.IO;
-using System.Text.RegularExpressions;
 using Terraria.ModLoader.Config.UI;
 using Terraria.ModLoader.Config;
 using Terraria.Graphics.Shaders;
 using Terraria.ModLoader.UI;
 using ReLogic.OS;
 using Microsoft.Xna.Framework.Graphics;
-using static System.Net.Mime.MediaTypeNames;
 using Terraria.GameInput;
 
 namespace CharCreationPreset;
@@ -36,9 +33,16 @@ public class CharCreationPreset : Mod
         On_UICharacterCreation.BuildPage += BuildPresetList;
         On_UICharacterCreation.MakeCharPreview += MakePetPreview;
         On_UICharacterListItem.AddTmlElements += AddCopyButton;
+        SetupFavoritePresets();
         base.Load();
     }
-
+    public static void UpdatePets(UICharacter _character)
+    {
+        if (_character._player.miscEquips[0].type != ItemID.None)
+            _character.PreparePetProjectiles();
+        else
+            _character._petProjectiles = UICharacter.NoPets;
+    }
     private static void AddCopyButton(On_UICharacterListItem.orig_AddTmlElements orig, UICharacterListItem self, Terraria.IO.PlayerFileData data)
     {
         orig.Invoke(self, data);
@@ -140,17 +144,17 @@ public class CharCreationPreset : Mod
     }
     static void AddPresetGrid(UICharacterCreation self)
     {
-        var bounds = Main.instance.Window.ClientBounds;
-        float width = Math.Min(400, bounds.Width * .5f - 340f);
+        //var bounds = Main.instance.Window.ClientBounds;
+        float width = Math.Min(400, Main.screenWidth * .5f - 340f);
         float offsetX = -(400 - width) * .5f;
-        float height = Math.Min(600, bounds.Height - 180);
-        
+        float height = Math.Min(600, Main.screenHeight - 180);
+
         UIPanel presetContainer = new()
         {
             Width = StyleDimension.FromPixels(width),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150f),
-            Left = StyleDimension.FromPixels(480f  + offsetX),
+            Left = StyleDimension.FromPixels(480f + offsetX),
             HAlign = .5f,
             VAlign = 0f,
         };
@@ -174,7 +178,7 @@ public class CharCreationPreset : Mod
             Width = StyleDimension.FromPixels(32),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150),
-            Left = StyleDimension.FromPixels(700 +offsetX * 2),
+            Left = StyleDimension.FromPixels(700 + offsetX * 2),
             HAlign = .5f,
             VAlign = 0f,
 
@@ -200,10 +204,10 @@ public class CharCreationPreset : Mod
     }
     static void AddVanityGrid(UICharacterCreation self)
     {
-        var bounds = Main.instance.Window.ClientBounds;
-        float width = Math.Min(400, bounds.Width * .5f - 340f);
+        //var bounds = Main.instance.Window.ClientBounds;
+        float width = Math.Min(400, Main.screenWidth * .5f - 340f);
         float offsetX = (400f - width) * .5f;
-        float height = Math.Min(600, bounds.Height - 180);
+        float height = Math.Min(600, Main.screenHeight - 180);
 
         UIPanel vanityContainer = new()
         {
@@ -259,16 +263,16 @@ public class CharCreationPreset : Mod
     }
     static void AddItemSlots(UICharacterCreation self)
     {
-        var bounds = Main.instance.Window.ClientBounds;
-        float h = Math.Min(125f, bounds.Height - 670f);
+        //var bounds = Main.instance.Window.ClientBounds;
+        float h = Math.Min(125f, Main.screenHeight - 670f);
         float factor = h / 125f;
-        float height = MathHelper.Lerp(40,125, factor);
-        float yOffset = MathHelper.Lerp(-20,0,factor);
+        float height = MathHelper.Lerp(40, 125, factor);
+        float yOffset = MathHelper.Lerp(-20, 0, factor);
         UIPanel basePanel = ItemPanel = new()
         {
             Width = StyleDimension.FromPixels(500f),
             Height = StyleDimension.FromPixels(height),
-            Top = StyleDimension.FromPixels(650f +yOffset),
+            Top = StyleDimension.FromPixels(650f + yOffset),
             HAlign = 0.5f,
             VAlign = 0f
         };
@@ -278,9 +282,14 @@ public class CharCreationPreset : Mod
     static void PastePreset(UICharacterCreation self)
     {
         string value = Platform.Get<IClipboard>().Value;
-        Utils.ApplyPlayerSetFromJson(value, self._player);
-        currentPreviewChar.PreparePetProjectiles();
-        SetupItemPanel(self);
+        try
+        {
+            Utils.ApplyPlayerSetFromJson(value, self._player);
+            UpdatePets(currentPreviewChar);
+            SetupItemPanel(self);
+        }
+        catch { }
+
     }
     static void HookUpdate(UICharacterCreation self)
     {
@@ -337,9 +346,25 @@ public class CharCreationPreset : Mod
     static VanityState VanityState;
     static VanityState DyeState;
 
-    static bool pendingUpdatePreset;
-    static bool pendingUpdateVanity;
+    public static bool pendingUpdatePreset;
+    public static bool pendingUpdateVanity;
 
+    public static readonly HashSet<string> FavoritedPresets = [];
+    public static void SetupFavoritePresets()
+    {
+        FavoritedPresets.Clear();
+        var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
+        var fileFullName = Path.Combine(mainPath, "FavoritePresets.txt");
+        if (!System.IO.File.Exists(fileFullName)) return;
+        var list = System.IO.File.ReadAllLines(fileFullName);
+        foreach (var item in list)
+            FavoritedPresets.Add(item);
+    }
+    public static void SaveFavoritePresets()
+    {
+        var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
+        System.IO.File.WriteAllLines(Path.Combine(mainPath, "FavoritePresets.txt"), FavoritedPresets);
+    }
     static void SetupPresetGrid(UICharacterCreation UICharacterCreation)
     {
         if (PresetGrid == null) return;
@@ -358,17 +383,17 @@ public class CharCreationPreset : Mod
             if (!skip && !Path.GetFileNameWithoutExtension(file).ToLower().Contains(searchText.ToLower())) continue;
             var characterBox = new UICharacterBox(file);
 
-            characterBox.OnLeftClick += delegate
+            characterBox.OnLeftClick += (evt, elem) =>
             {
+                if (evt.Target is UIFocusInputTextField || evt.Target is UIImageButton) return;
                 var content = System.IO.File.ReadAllText(file);
                 Utils.ApplyPlayerSetFromJson(content, UICharacterCreation._player);
-                currentPreviewChar.PreparePetProjectiles();
+                UpdatePets(currentPreviewChar);
+
                 SetupItemPanel(UICharacterCreation);
                 SoundEngine.PlaySound(SoundID.Research);
                 SoundEngine.PlaySound(SoundID.ResearchComplete);
             };
-            characterBox.OnMouseOut += FadedMouseOut;
-            characterBox.OnMouseOver += FadedMouseOver;
             PresetGrid.Add(characterBox);
             var lst = PresetGrid._items;
         }
@@ -406,7 +431,7 @@ public class CharCreationPreset : Mod
         UICharacterCreation.Recalculate();
     }
 
-    static void SetupScrollBar(UICharacterCreation UICharacterCreation, UIScrollbar bar, UIGrid grid, bool resetViewPosition = true)
+    static void SetupScrollBar(UICharacterCreation UICharacterCreation, UIScrollbar bar, UIGrid grid, bool resetViewPosition = false)
     {
         float height = grid.GetInnerDimensions().Height;
         float totalHeight = grid.GetTotalHeight();
@@ -438,7 +463,7 @@ public class CharCreationPreset : Mod
             ItemDefinitionOptionElement itemDefinitionOptionElement = new(itemDefinition)
             {
                 Left = StyleDimension.FromPixels(n * 45),
-                Top = StyleDimension.FromPixels(MathHelper.Lerp(-40,10,factor))
+                Top = StyleDimension.FromPixels(MathHelper.Lerp(-40, 10, factor))
             };
             int k = n;
             itemDefinitionOptionElement.OnUpdate += delegate
@@ -530,7 +555,7 @@ public class CharCreationPreset : Mod
         {
             case VanityState.Pet:
                 player.miscEquips[0] = targetItem;
-                currentPreviewChar.PreparePetProjectiles();
+                UpdatePets(currentPreviewChar);
                 break;
             case VanityState.HairDye:
                 player.hairDye = targetItem.hairDye;

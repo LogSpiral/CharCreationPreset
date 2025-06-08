@@ -29,7 +29,6 @@ public static class Utils
         int[] itemVanityTypes = new int[8];
         for (int n = 0; n < 8; n++)
             itemVanityTypes[n] = player.armor[10 + n].vanity ? player.armor[10 + n].type : player.armor[n].vanity ? player.armor[n].type : 0;
-
         return JsonConvert.SerializeObject(new Dictionary<string, object> {
             { "version", 1 },
             { "hairStyle", player.hair },
@@ -59,7 +58,7 @@ public static class Utils
             { "dyeAcc3",new ItemDefinition(player.dye[5].type)},
             { "dyeAcc4",new ItemDefinition(player.dye[6].type)},
             { "dyeAcc5",new ItemDefinition(player.dye[7].type)},
-            { "dyePet",new ItemDefinition(player.miscDyes[0].type)},
+            { "dyePet",new ItemDefinition(player.miscDyes[0].type)}
         }, new JsonSerializerSettings
         {
             TypeNameHandling = TypeNameHandling.Auto,
