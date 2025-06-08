@@ -1,5 +1,6 @@
 ﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using System;
 using System.IO;
 using System.Linq;
 using System.Reflection.Emit;
@@ -69,14 +70,14 @@ public partial class UICharacterBox : UIElement
             {
                 foreach (var fileName in Directory.GetFiles(path))
                 {
-                    if (Path.GetFileNameWithoutExtension(fileName) == _fileName.CurrentString) 
+                    if (Path.GetFileNameWithoutExtension(fileName) == _fileName.CurrentString)
                     {
                         _fileName.CurrentString = _oldName;
                         SoundEngine.PlaySound(SoundID.Item62);
                         return;
                     }
                 }
-                    SoundEngine.PlaySound(SoundID.ResearchComplete);
+                SoundEngine.PlaySound(SoundID.ResearchComplete);
                 File.Move(Path.Combine(path, _oldName + ".json"), Path.Combine(path, _fileName.CurrentString + ".json"));
                 if (CharCreationPreset.FavoritedPresets.Remove(_oldName))
                     CharCreationPreset.FavoritedPresets.Add(_fileName.CurrentString);
@@ -111,6 +112,18 @@ public partial class UICharacterBox : UIElement
         };
 
         _container.Append(_deleteButton);
+
+
+
+        UIHorizontalSeparator separator = new UIHorizontalSeparator
+        {
+            HAlign = .5f,
+            Top = StyleDimension.FromPixels(20),
+            Width = StyleDimension.FromPercent(1f),
+            Color = Color.Lerp(Color.White, new Color(63, 65, 151, 255), 0.85f) * 0.9f
+        };
+
+        _container.Append(separator);
     }
 
     public override string ToString() => _fileName?.CurrentString;
