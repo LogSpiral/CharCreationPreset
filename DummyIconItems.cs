@@ -7,24 +7,30 @@ using Terraria.ModLoader;
 
 namespace CharCreationPreset;
 
-class VanityHeadDummy : ModItem
+internal class VanityHeadDummy : ModItem
 {
 }
-class VanityBodyDummy : ModItem
+
+internal class VanityBodyDummy : ModItem
 {
 }
-class VanityLegDummy : ModItem
+
+internal class VanityLegDummy : ModItem
 {
 }
-class VanityAccDummy : ModItem
+
+internal class VanityAccDummy : ModItem
 {
 }
-class VanityPetDummy : ModItem
+
+internal class VanityPetDummy : ModItem
 {
 }
-class VanityHairDyeDummy : ModItem
+
+internal class VanityHairDyeDummy : ModItem
 {
 }
-class VanityDyeDummy : ModItem
+
+internal class VanityDyeDummy : ModItem
 {
 }

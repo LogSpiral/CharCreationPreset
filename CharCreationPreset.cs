@@ -1,53 +1,219 @@
 using Microsoft.Xna.Framework;
-using Newtonsoft.Json.Linq;
+using Microsoft.Xna.Framework.Graphics;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using ReLogic.OS;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
 using Terraria;
 using Terraria.Audio;
 using Terraria.GameContent;
 using Terraria.GameContent.UI.Elements;
 using Terraria.GameContent.UI.States;
+using Terraria.GameInput;
+using Terraria.Graphics.Shaders;
 using Terraria.ID;
 using Terraria.Localization;
 using Terraria.ModLoader;
+using Terraria.ModLoader.Config;
+using Terraria.ModLoader.Config.UI;
+using Terraria.ModLoader.UI;
 using Terraria.ModLoader.UI.Elements;
 using Terraria.UI;
-using System.Linq;
-using System.IO;
-using Terraria.ModLoader.Config.UI;
-using Terraria.ModLoader.Config;
-using Terraria.Graphics.Shaders;
-using Terraria.ModLoader.UI;
-using ReLogic.OS;
-using Microsoft.Xna.Framework.Graphics;
-using Terraria.GameInput;
+using System.Reflection;
+using MonoMod.Cil;
+using System.Collections;
 
 namespace CharCreationPreset;
 
 // Please read https://github.com/tModLoader/tModLoader/wiki/Basic-tModLoader-Modding-Guide#mod-skeleton-contents for more information about the various files in a mod.
 public class CharCreationPreset : Mod
 {
+    public override object Call(params object[] args)
+    {
+        if (args[0] is not string methodName)
+            throw new ArgumentException("The first argument should be the name of the method");
+        switch (methodName)
+        {
+            case nameof(MakePetPreview):
+                {
+                    if (args[1] is not UIElement container || args[2] is not Player player)
+                        throw new ArgumentException("Type mismatch");
+                    return MakePetPreviewInternal(container, player);
+                }
+
+            case nameof(BuildPresetList):
+                {
+                    if (args[1] is not UIElement uiCharacterCreation || args[2] is not Player player)
+                        throw new ArgumentException("Type mismatch");
+                    BuildPresetListInternal(uiCharacterCreation, player);
+                    return false;
+                }
+
+            case "GetPresetUIs":
+                return (_presetGrid, _presetScrollbar, _presetSearchBar);
+            case "GetVanityUIs":
+                return (_vanityGrid, _vanityScrollbar, _vanitySearchBar);
+            case "GetItemPanel":
+                return _itemPanel;
+
+            case "RegisterSetPlayerCallback":
+                if (args[1] is not string callBackName || args[2] is not Action<UICharacter, Player> callBack)
+                    throw new ArgumentException("Type mismatch");
+                _playerSetCallBacks[callBackName] = callBack;
+                return true;
+
+            case "RegisterSaveExtraData":
+                if (args[1] is not string callBackNameSave || args[2] is not Action<Dictionary<string, object>, Player> callBackSave)
+                    throw new ArgumentException("Type mismatch");
+                PlayerSaveCallBacks[callBackNameSave] = callBackSave;
+                return true;
+
+
+            case "RegisterReadExtraData":
+                if (args[1] is not string callBackNameRead || args[2] is not Action<Dictionary<string, object>, Player> callBackRead)
+                    throw new ArgumentException("Type mismatch");
+                PlayerReadCallBacks[callBackNameRead] = callBackRead;
+                return true;
+        }
+        return false;
+    }
+    private static readonly Dictionary<string, Action<UICharacter, Player>> _playerSetCallBacks = [];
+    public static readonly Dictionary<string, Action<Dictionary<string, object>, Player>> PlayerSaveCallBacks = [];
+    public static readonly Dictionary<string, Action<Dictionary<string, object>, Player>> PlayerReadCallBacks = [];
+
+    static void MrPlagueRacesSupport()
+    {
+        if (!ModContent.TryFind<ModSystem>("MrPlagueRaces", "UIRedirectionSystem", out var system)) 
+            return;
+        var assembly = system.GetType().Assembly;
+
+        var MrPlagueUICharacterCreationType = (from type in assembly.GetTypes() where type.Name == "MrPlagueUICharacterCreation" select type).First();
+        var _playerInfo = MrPlagueUICharacterCreationType.GetField("_player", BindingFlags.Instance | BindingFlags.NonPublic);
+        MonoModHooks.Modify(MrPlagueUICharacterCreationType.GetMethod("MakeCharPreview", BindingFlags.NonPublic | BindingFlags.Instance), il => 
+        {
+            var cursor = new ILCursor(il);
+            if (!cursor.TryGotoNext(i => i.MatchRet())) return;
+            int index = cursor.Index;
+            cursor.Index = 0;
+            cursor.RemoveRange(index);
+            cursor.EmitLdarg1();
+            cursor.EmitLdarg0();
+            cursor.EmitLdfld(_playerInfo);
+            cursor.EmitDelegate<Action<UIElement,Player>>((element,player) => MakePetPreviewInternal(element,player));
+        });
+
+        MonoModHooks.Modify(system.GetType().GetMethod("InterceptCharacterCreationMenu", BindingFlags.NonPublic | BindingFlags.Instance), il =>
+        {
+            var cursor = new ILCursor(il);
+            if (!cursor.TryGotoNext(i => i.MatchLdcI4(888))) 
+                return;
+            cursor.Index += 6;
+            cursor.EmitDelegate<Action>(() =>
+            {
+                BuildPresetListInternal(Main.MenuUI.CurrentState, Main.PendingPlayer);
+            });
+        });
+
+
+
+        PlayerSaveCallBacks["MrPlagueRacesSave"] = (dict, player) =>
+        {
+            dynamic mplr = player.GetModPlayer(ModContent.Find<ModPlayer>("MrPlagueRaces/MrPlagueRacesPlayer"));
+            dict["MrPlagueRaces/Race"] = mplr.race.FullName;
+            Color detailColor = mplr.detailColor;
+            dict["MrPlagueRaces/detailColorR"] = detailColor.R;
+            dict["MrPlagueRaces/detailColorG"] = detailColor.G;
+            dict["MrPlagueRaces/detailColorB"] = detailColor.B;
+        };
+        var raceLoaderType = (from type in assembly.GetTypes()where type.Name == "RaceLoader" select type).First();
+        var methods = (from method in raceLoaderType.GetMethods() where method.Name == "TryGetRace" && method.GetParameters()[0].ParameterType == typeof(string) select method).First();
+        var mplrInstance = ModContent.Find<ModPlayer>("MrPlagueRaces/MrPlagueRacesPlayer");
+        var raceFldInfo = mplrInstance.GetType().GetField("race", BindingFlags.Instance | BindingFlags.Public);
+        PlayerReadCallBacks["MrPlagueRacesSave"] = (dict, player) =>
+        {
+            dynamic mplr = player.GetModPlayer(mplrInstance);
+            if (dict.TryGetValue("MrPlagueRaces/Race", out var nameObject) && nameObject is string raceName)
+            {
+                object[] paraList = [raceName, null];
+                var flag = methods?.Invoke(null, paraList);
+                var type = paraList[1].GetType();
+                if (flag is true)
+                    raceFldInfo.SetValue(mplr, paraList[1]);
+
+            }
+            Color detailColor = Color.White;
+
+            if (dict.TryGetValue("MrPlagueRaces/detailColorR", out object obj))
+                detailColor.R = (byte)(long)obj;
+
+            if (dict.TryGetValue("MrPlagueRaces/detailColorG", out obj))
+                detailColor.G = (byte)(long)obj;
+
+            if (dict.TryGetValue("MrPlagueRaces/detailColorB", out obj))
+                detailColor.B = (byte)(long)obj;
+
+            mplr.detailColor = detailColor;
+        };
+    }
+
     public override void Load()
     {
         On_UICharacterCreation.BuildPage += BuildPresetList;
         On_UICharacterCreation.MakeCharPreview += MakePetPreview;
         On_UICharacterListItem.AddTmlElements += AddCopyButton;
         SetupFavoritePresets();
+
         base.Load();
     }
-    public static void UpdatePets(UICharacter _character)
+    public override void PostSetupContent()
     {
-        if (_character._player.miscEquips[0].type != ItemID.None)
-            _character.PreparePetProjectiles();
-        else
-            _character._petProjectiles = UICharacter.NoPets;
+        MrPlagueRacesSupport();
+        base.PostSetupContent();
     }
+    public static void UpdatePets(UICharacter character)
+    {
+        if (character._player.miscEquips[0].type != ItemID.None)
+            character.PreparePetProjectiles();
+        else
+            character._petProjectiles = UICharacter.NoPets;
+    }
+
+    private static void BuildPresetListInternal(UIElement self, Player player)
+    {
+        AddSaveButton(self, player);
+        AddPresetGrid(self, player);
+        AddVanityGrid(self, player);
+        AddItemSlots(self, player);
+        PastePreset(self, player);
+        HookUpdate(self, player);
+    }
+
+    private static UICharacter MakePetPreviewInternal(UIElement container, Player player)
+    {
+        var element = _currentPreviewChar = new UICharacter(player, animated: true, hasBackPanel: false, 1.5f)
+        {
+            Width = StyleDimension.FromPixels(80f),
+            Height = StyleDimension.FromPixelsAndPercent(80f, 0f),
+            Top = StyleDimension.FromPixelsAndPercent(-70, 0f),
+            VAlign = 0f,
+            HAlign = 0.5f
+        };
+
+        container.Append(element);
+
+        return element;
+    }
+
     private static void AddCopyButton(On_UICharacterListItem.orig_AddTmlElements orig, UICharacterListItem self, Terraria.IO.PlayerFileData data)
     {
         orig.Invoke(self, data);
 
-        UIImageButton uIImageButton5 = new UIImageButton(Main.Assets.Request<Texture2D>("Images/UI/CharCreation/Copy"))
+        var uIImageButton5 = new UIImageButton(Main.Assets.Request<Texture2D>("Images/UI/CharCreation/Copy"))
         {
             VAlign = 1f,
             HAlign = 1f,
@@ -56,7 +222,7 @@ public class CharCreationPreset : Mod
 
         uIImageButton5.OnLeftClick += delegate
         {
-            string text = Utils.PlayerSetAsJson(self._playerPanel._player);
+            var text = Utils.PlayerSetAsJson(self._playerPanel._player);
             PlayerInput.PrettyPrintProfiles(ref text);
             Platform.Get<IClipboard>().Value = text;
             SoundEngine.PlaySound(SoundID.Research);
@@ -78,23 +244,12 @@ public class CharCreationPreset : Mod
         self.Append(uIImageButton5);
     }
 
-    private void MakePetPreview(On_UICharacterCreation.orig_MakeCharPreview orig, UICharacterCreation self, UIPanel container)
-    {
-        UICharacter element = currentPreviewChar = new UICharacter(self._player, animated: true, hasBackPanel: false, 1.5f)
-        {
-            Width = StyleDimension.FromPixels(80f),
-            Height = StyleDimension.FromPixelsAndPercent(80f, 0f),
-            Top = StyleDimension.FromPixelsAndPercent(-70, 0f),
-            VAlign = 0f,
-            HAlign = 0.5f
-        };
+    private static void MakePetPreview(On_UICharacterCreation.orig_MakeCharPreview orig, UICharacterCreation self, UIPanel container)
+        => MakePetPreviewInternal(container, self._player);
 
-        container.Append(element);
-    }
-
-    static void AddSaveButton(UICharacterCreation self)
+    private static void AddSaveButton(UIElement self, Player player)
     {
-        UITextPanel<LocalizedText> SavePresetButton = new(Language.GetText("Mods.CharCreationPreset.UI.SavePreset"), 0.7f, true)
+        UITextPanel<LocalizedText> savePresetButton = new(Language.GetText("Mods.CharCreationPreset.UI.SavePreset"), 0.7f, true)
         {
             Width = StyleDimension.FromPixels(240f),
             Height = StyleDimension.FromPixels(60),
@@ -103,29 +258,29 @@ public class CharCreationPreset : Mod
             HAlign = 0.5f,
             VAlign = 0f
         };
-        SavePresetButton.OnMouseOut += FadedMouseOut;
-        SavePresetButton.OnMouseOver += FadedMouseOver;
-        SavePresetButton.OnLeftClick += delegate
+        savePresetButton.OnMouseOut += FadedMouseOut;
+        savePresetButton.OnMouseOver += FadedMouseOver;
+        savePresetButton.OnLeftClick += delegate
         {
             SoundEngine.PlaySound(SoundID.ResearchComplete);
             SoundEngine.PlaySound(SoundID.Research);
 
-            var content = Utils.PlayerSetAsJson(self._player);
+            var content = Utils.PlayerSetAsJson(player);
             var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
             Directory.CreateDirectory(mainPath);
-            int counter = 1;
+            var counter = 1;
             while (System.IO.File.Exists(Path.Combine(mainPath, $"Preset_{counter}.json")))
                 counter++;
             var filePath = Path.Combine(mainPath, $"Preset_{counter}.json");
             System.IO.File.WriteAllText(filePath, content);
 
-            SetupPresetGrid(self);
-            SetupScrollBar(self, PresetScrollbar, PresetGrid);
+            SetupPresetGrid(self, player);
+            SetupScrollBar(self, _presetScrollbar, _presetGrid);
         };
-        self.Append(SavePresetButton);
+        self.Append(savePresetButton);
 
 
-        UITextPanel<LocalizedText> OpenFolderButton = new(Language.GetText("Mods.CharCreationPreset.UI.OpenFolder"), 0.7f, true)
+        UITextPanel<LocalizedText> openFolderButton = new(Language.GetText("Mods.CharCreationPreset.UI.OpenFolder"), 0.7f, true)
         {
             Width = StyleDimension.FromPixels(240f),
             Height = StyleDimension.FromPixels(60),
@@ -134,19 +289,20 @@ public class CharCreationPreset : Mod
             HAlign = 0.5f,
             VAlign = 0f
         };
-        OpenFolderButton.OnMouseOut += FadedMouseOut;
-        OpenFolderButton.OnMouseOver += FadedMouseOver;
-        OpenFolderButton.OnLeftClick += delegate
+        openFolderButton.OnMouseOut += FadedMouseOut;
+        openFolderButton.OnMouseOver += FadedMouseOver;
+        openFolderButton.OnLeftClick += delegate
         {
             Terraria.Utils.OpenFolder(Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset)));
         };
-        self.Append(OpenFolderButton);
+        self.Append(openFolderButton);
     }
-    static void AddPresetGrid(UICharacterCreation self)
+
+    private static void AddPresetGrid(UIElement self, Player player)
     {
         //var bounds = Main.instance.Window.ClientBounds;
-        float width = Math.Min(400, Main.screenWidth * .5f - 340f);
-        float offsetX = -(400 - width) * .5f;
+        var width = Math.Min(400, Main.screenWidth * .5f - 340f);
+        var offsetX = -(400 - width) * .5f;
         float height = Math.Min(600, Main.screenHeight - 180);
 
         UIPanel presetContainer = new()
@@ -160,20 +316,20 @@ public class CharCreationPreset : Mod
         };
         self.Append(presetContainer);
 
-        PresetGrid = new UIGrid()
+        _presetGrid = new UIGrid()
         {
             Width = StyleDimension.FromPercent(1),
             Height = StyleDimension.FromPercent(1)
         };
-        presetContainer.Append(PresetGrid);
-        SetupPresetGrid(self);
-        PresetGrid.OnUpdate += delegate
+        presetContainer.Append(_presetGrid);
+        SetupPresetGrid(self, player);
+        _presetGrid.OnUpdate += delegate
         {
-            var bar = PresetGrid._scrollbar;
-            var top = PresetGrid._innerList.Top;
-            PresetGrid.Recalculate();
+            var bar = _presetGrid._scrollbar;
+            var top = _presetGrid._innerList.Top;
+            _presetGrid.Recalculate();
         };
-        PresetScrollbar = new UIScrollbar()
+        _presetScrollbar = new UIScrollbar()
         {
             Width = StyleDimension.FromPixels(32),
             Height = StyleDimension.FromPixels(height),
@@ -183,11 +339,11 @@ public class CharCreationPreset : Mod
             VAlign = 0f,
 
         };
-        SetupScrollBar(self, PresetScrollbar, PresetGrid);
-        PresetGrid.SetScrollbar(PresetScrollbar);
+        SetupScrollBar(self, _presetScrollbar, _presetGrid);
+        _presetGrid.SetScrollbar(_presetScrollbar);
 
 
-        PresetSearchBar = new UIFocusInputTextField(Language.GetTextValue("Mods.CharCreationPreset.UI.SearchHint"))
+        _presetSearchBar = new UIFocusInputTextField(Language.GetTextValue("Mods.CharCreationPreset.UI.SearchHint"))
         {
             Width = StyleDimension.FromPixels(400f),
             Height = StyleDimension.FromPixels(40),
@@ -196,17 +352,18 @@ public class CharCreationPreset : Mod
             HAlign = .5f,
             VAlign = 0f,
         };
-        PresetSearchBar.OnTextChange += delegate
+        _presetSearchBar.OnTextChange += delegate
         {
-            pendingUpdatePreset = true;
+            PendingUpdatePreset = true;
         };
-        self.Append(PresetSearchBar);
+        self.Append(_presetSearchBar);
     }
-    static void AddVanityGrid(UICharacterCreation self)
+
+    private static void AddVanityGrid(UIElement self, Player player)
     {
         //var bounds = Main.instance.Window.ClientBounds;
-        float width = Math.Min(400, Main.screenWidth * .5f - 340f);
-        float offsetX = (400f - width) * .5f;
+        var width = Math.Min(400, Main.screenWidth * .5f - 340f);
+        var offsetX = (400f - width) * .5f;
         float height = Math.Min(600, Main.screenHeight - 180);
 
         UIPanel vanityContainer = new()
@@ -220,20 +377,20 @@ public class CharCreationPreset : Mod
         };
         self.Append(vanityContainer);
 
-        VanityGrid = new UIGrid()
+        _vanityGrid = new UIGrid()
         {
             Width = StyleDimension.FromPercent(1),
             Height = StyleDimension.FromPercent(1)
         };
-        vanityContainer.Append(VanityGrid);
+        vanityContainer.Append(_vanityGrid);
         //SetupVanityGrid(self);
-        VanityGrid.OnUpdate += delegate
+        _vanityGrid.OnUpdate += delegate
         {
-            var bar = VanityGrid._scrollbar;
-            var top = VanityGrid._innerList.Top;
-            VanityGrid.Recalculate();
+            var bar = _vanityGrid._scrollbar;
+            var top = _vanityGrid._innerList.Top;
+            _vanityGrid.Recalculate();
         };
-        VanityScrollbar = new UIScrollbar()
+        _vanityScrollbar = new UIScrollbar()
         {
             Width = StyleDimension.FromPixels(32),
             Height = StyleDimension.FromPixels(height),
@@ -243,10 +400,10 @@ public class CharCreationPreset : Mod
             VAlign = 0f,
 
         };
-        SetupScrollBar(self, VanityScrollbar, VanityGrid);
-        VanityGrid.SetScrollbar(VanityScrollbar);
+        SetupScrollBar(self, _vanityScrollbar, _vanityGrid);
+        _vanityGrid.SetScrollbar(_vanityScrollbar);
 
-        VanitySearchBar = new UIFocusInputTextField(Language.GetTextValue("Mods.CharCreationPreset.UI.SearchHint"))
+        _vanitySearchBar = new UIFocusInputTextField(Language.GetTextValue("Mods.CharCreationPreset.UI.SearchHint"))
         {
             Width = StyleDimension.FromPixels(400f),
             Height = StyleDimension.FromPixels(40),
@@ -255,20 +412,21 @@ public class CharCreationPreset : Mod
             HAlign = .5f,
             VAlign = 0f,
         };
-        VanitySearchBar.OnTextChange += delegate
+        _vanitySearchBar.OnTextChange += delegate
         {
-            pendingUpdateVanity = true;
+            _pendingUpdateVanity = true;
         };
-        self.Append(VanitySearchBar);
+        self.Append(_vanitySearchBar);
     }
-    static void AddItemSlots(UICharacterCreation self)
+
+    private static void AddItemSlots(UIElement self, Player player)
     {
         //var bounds = Main.instance.Window.ClientBounds;
-        float h = Math.Min(125f, Main.screenHeight - 670f);
-        float factor = h / 125f;
-        float height = MathHelper.Lerp(40, 125, factor);
-        float yOffset = MathHelper.Lerp(-20, 0, factor);
-        UIPanel basePanel = ItemPanel = new()
+        var h = Math.Min(125f, Main.screenHeight - 670f);
+        var factor = h / 125f;
+        var height = MathHelper.Lerp(40, 125, factor);
+        var yOffset = MathHelper.Lerp(-20, 0, factor);
+        var basePanel = _itemPanel = new()
         {
             Width = StyleDimension.FromPixels(500f),
             Height = StyleDimension.FromPixels(height),
@@ -277,108 +435,109 @@ public class CharCreationPreset : Mod
             VAlign = 0f
         };
         self.Append(basePanel);
-        SetupItemPanel(self);
+        SetupItemPanel(self, player);
     }
-    static void PastePreset(UICharacterCreation self)
+
+    private static void PastePreset(UIElement self, Player player)
     {
-        string value = Platform.Get<IClipboard>().Value;
+        var value = Platform.Get<IClipboard>().Value;
         try
         {
-            Utils.ApplyPlayerSetFromJson(value, self._player);
-            UpdatePets(currentPreviewChar);
-            SetupItemPanel(self);
+            Utils.ApplyPlayerSetFromJson(value, player);
+            UpdatePets(_currentPreviewChar);
+            foreach (var pair in _playerSetCallBacks)
+                pair.Value?.Invoke(_currentPreviewChar, player);
+            SetupItemPanel(self, player);
         }
         catch { }
 
     }
-    static void HookUpdate(UICharacterCreation self)
+
+    private static void HookUpdate(UIElement self, Player player)
     {
         self.OnUpdate += delegate
         {
-            if (pendingUpdatePreset)
+            if (PendingUpdatePreset)
             {
-                pendingUpdatePreset = false;
-                SetupPresetGrid(self);
-                SetupScrollBar(self, PresetScrollbar, PresetGrid);
+                PendingUpdatePreset = false;
+                SetupPresetGrid(self, player);
+                SetupScrollBar(self, _presetScrollbar, _presetGrid);
             }
-            if (pendingUpdateVanity)
+            if (_pendingUpdateVanity)
             {
-                pendingUpdateVanity = false;
-                SetupVanityGrid(self);
-                SetupScrollBar(self, VanityScrollbar, VanityGrid);
+                _pendingUpdateVanity = false;
+                SetupVanityGrid(self, player);
+                SetupScrollBar(self, _vanityScrollbar, _vanityGrid);
             }
         };
     }
-    static void BuildPresetList(On_UICharacterCreation.orig_BuildPage orig, UICharacterCreation self)
+
+    private static void BuildPresetList(On_UICharacterCreation.orig_BuildPage orig, UICharacterCreation self)
     {
         orig.Invoke(self);
-        AddSaveButton(self);
-        AddPresetGrid(self);
-        AddVanityGrid(self);
-        AddItemSlots(self);
-        PastePreset(self);
-        HookUpdate(self);
 
+        BuildPresetListInternal(self, self._player);
     }
-    static UICharacter currentPreviewChar;
 
-    static UIGrid PresetGrid;
-    static UIScrollbar PresetScrollbar;
-    static UIFocusInputTextField PresetSearchBar;
+    private static UICharacter _currentPreviewChar;
 
-    static UIGrid VanityGrid;
-    static UIScrollbar VanityScrollbar;
-    static UIFocusInputTextField VanitySearchBar;
+    private static UIGrid _presetGrid;
+    private static UIScrollbar _presetScrollbar;
+    private static UIFocusInputTextField _presetSearchBar;
 
-    static UIPanel ItemPanel;
-    static ItemDefinitionOptionElement CurrentOption
+    private static UIGrid _vanityGrid;
+    private static UIScrollbar _vanityScrollbar;
+    private static UIFocusInputTextField _vanitySearchBar;
+
+    private static UIPanel _itemPanel;
+
+    private static ItemDefinitionOptionElement CurrentOption
     {
         get;
         set
         {
-            if (field != null)
-                field.BackgroundTexture = TextureAssets.InventoryBack9;
+            field?.BackgroundTexture = TextureAssets.InventoryBack9;
             field = value;
             value.BackgroundTexture = TextureAssets.InventoryBack10;
         }
     }
 
-    static VanityState VanityState;
-    static VanityState DyeState;
+    private static VanityState _vanityState;
+    private static VanityState _dyeState;
 
-    public static bool pendingUpdatePreset;
-    public static bool pendingUpdateVanity;
+    public static bool PendingUpdatePreset { get; set; }
+    private static bool _pendingUpdateVanity;
 
-    public static readonly HashSet<string> FavoritedPresets = [];
-    public static void SetupFavoritePresets()
+    public static readonly HashSet<string> FavoritePresets = [];
+
+    private static void SetupFavoritePresets()
     {
-        FavoritedPresets.Clear();
+        FavoritePresets.Clear();
         var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
         var fileFullName = Path.Combine(mainPath, "FavoritePresets.txt");
         if (!System.IO.File.Exists(fileFullName)) return;
         var list = System.IO.File.ReadAllLines(fileFullName);
         foreach (var item in list)
-            FavoritedPresets.Add(item);
+            FavoritePresets.Add(item);
     }
     public static void SaveFavoritePresets()
     {
         var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
-        System.IO.File.WriteAllLines(Path.Combine(mainPath, "FavoritePresets.txt"), FavoritedPresets);
+        System.IO.File.WriteAllLines(Path.Combine(mainPath, "FavoritePresets.txt"), FavoritePresets);
     }
-    static void SetupPresetGrid(UICharacterCreation UICharacterCreation)
-    {
-        if (PresetGrid == null) return;
 
-        PresetGrid.Clear();
-        string searchText = PresetSearchBar?.CurrentString;
-        bool skip = string.IsNullOrEmpty(searchText);
+    private static void SetupPresetGrid(UIElement uiCharacterCreation, Player player)
+    {
+        if (_presetGrid == null) return;
+
+        _presetGrid.Clear();
+        var searchText = _presetSearchBar?.CurrentString;
+        var skip = string.IsNullOrEmpty(searchText);
         var mainPath = Path.Combine(Main.SavePath, "Mods", nameof(CharCreationPreset));
         Directory.CreateDirectory(mainPath);
         var files = Directory.GetFiles(mainPath);
-        int counter = 0;
         foreach (var file in files)
         {
-            counter++;
             if (Path.GetExtension(file) != ".json") continue;
             if (!skip && !Path.GetFileNameWithoutExtension(file).ToLower().Contains(searchText.ToLower())) continue;
             var characterBox = new UICharacterBox(file);
@@ -387,72 +546,72 @@ public class CharCreationPreset : Mod
             {
                 if (evt.Target is UIFocusInputTextField || evt.Target is UIImageButton) return;
                 var content = System.IO.File.ReadAllText(file);
-                Utils.ApplyPlayerSetFromJson(content, UICharacterCreation._player);
-                UpdatePets(currentPreviewChar);
-
-                SetupItemPanel(UICharacterCreation);
+                Utils.ApplyPlayerSetFromJson(content, player);
+                UpdatePets(_currentPreviewChar);
+                foreach (var pair in _playerSetCallBacks)
+                    pair.Value?.Invoke(_currentPreviewChar, player);
+                SetupItemPanel(uiCharacterCreation, player);
                 SoundEngine.PlaySound(SoundID.Research);
                 SoundEngine.PlaySound(SoundID.ResearchComplete);
             };
-            PresetGrid.Add(characterBox);
-            var lst = PresetGrid._items;
+            _presetGrid.Add(characterBox);
+            var lst = _presetGrid._items;
         }
-        UICharacterCreation.Recalculate();
+        uiCharacterCreation.Recalculate();
     }
 
-    static void SetupVanityGrid(UICharacterCreation UICharacterCreation)
+    private static void SetupVanityGrid(UIElement uiCharacterCreation, Player player)
     {
-        if (VanityGrid == null) return;
+        if (_vanityGrid == null) return;
 
-        VanityGrid.Clear();
-        string searchText = VanitySearchBar?.CurrentString;
-        bool skip = string.IsNullOrEmpty(searchText);
-        Item dummyItem = new Item();
-        for (int n = 0; n < ItemLoader.ItemCount; n++)
+        _vanityGrid.Clear();
+        var searchText = _vanitySearchBar?.CurrentString;
+        var skip = string.IsNullOrEmpty(searchText);
+        var dummyItem = new Item();
+        for (var n = 0; n < ItemLoader.ItemCount; n++)
         {
             dummyItem.SetDefaults(n);
             if (dummyItem.type != n) continue;
-            if (!VanityCheck(VanityState, dummyItem))
+            if (!VanityCheck(_vanityState, dummyItem))
                 continue;
             if (!skip && !dummyItem.Name.ToLower().Contains(searchText.ToLower()))
                 continue;
             ItemDefinition itemDefinition = new(n);
             ItemDefinitionOptionElement itemDefinitionOption = new(itemDefinition, .8f);
-            VanityGrid.Add(itemDefinitionOption);
-            Item clone = dummyItem.Clone();
+            _vanityGrid.Add(itemDefinitionOption);
+            var clone = dummyItem.Clone();
             itemDefinitionOption.OnLeftClick += delegate
             {
-                VanitySet(VanityState, UICharacterCreation._player, clone, DyeState);
+                VanitySet(_vanityState, player, clone, _dyeState);
                 SoundEngine.PlaySound(SoundID.Research);
                 SoundEngine.PlaySound(SoundID.ResearchComplete);
                 CurrentOption?.SetItem(new ItemDefinition(clone.type));
             };
         }
-        UICharacterCreation.Recalculate();
+        uiCharacterCreation.Recalculate();
     }
 
-    static void SetupScrollBar(UICharacterCreation UICharacterCreation, UIScrollbar bar, UIGrid grid, bool resetViewPosition = false)
+    private static void SetupScrollBar(UIElement uiCharacterCreation, UIScrollbar bar, UIGrid grid, bool resetViewPosition = false)
     {
-        float height = grid.GetInnerDimensions().Height;
-        float totalHeight = grid.GetTotalHeight();
+        var height = grid.GetInnerDimensions().Height;
+        var totalHeight = grid.GetTotalHeight();
         bar.SetView(height, totalHeight);
         if (resetViewPosition)
             bar.ViewPosition = 0f;
 
         bar.Remove();
         if (height < totalHeight)
-            UICharacterCreation.Append(bar);
+            uiCharacterCreation.Append(bar);
 
     }
 
-    static void SetupItemPanel(UICharacterCreation UICharacterCreation)
+    private static void SetupItemPanel(UIElement uiCharacterCreation, Player player)
     {
         var bounds = Main.instance.Window.ClientBounds;
-        float h = Math.Min(125f, bounds.Height - 670f);
-        float factor = h / 125f;
-        ItemPanel.RemoveAllChildren();
-        var player = UICharacterCreation._player;
-        for (int n = 0; n < 10; n++)
+        var h = Math.Min(125f, bounds.Height - 670f);
+        var factor = h / 125f;
+        _itemPanel.RemoveAllChildren();
+        for (var n = 0; n < 10; n++)
         {
             ItemDefinition itemDefinition = new(n switch
             {
@@ -465,7 +624,7 @@ public class CharCreationPreset : Mod
                 Left = StyleDimension.FromPixels(n * 45),
                 Top = StyleDimension.FromPixels(MathHelper.Lerp(-40, 10, factor))
             };
-            int k = n;
+            var k = n;
             itemDefinitionOptionElement.OnUpdate += delegate
             {
                 if (itemDefinitionOptionElement.Item.type != ItemID.None) return;
@@ -479,26 +638,26 @@ public class CharCreationPreset : Mod
                     _ => ModContent.ItemType<VanityAccDummy>()
                 }));
             };
-            ItemPanel.Append(itemDefinitionOptionElement);
+            _itemPanel.Append(itemDefinitionOptionElement);
 
             itemDefinitionOptionElement.OnLeftClick += delegate
             {
                 SoundEngine.PlaySound(SoundID.MenuTick);
-                VanityState = (VanityState)k;
+                _vanityState = (VanityState)k;
                 CurrentOption = itemDefinitionOptionElement;
-                SetupVanityGrid(UICharacterCreation);
-                SetupScrollBar(UICharacterCreation, VanityScrollbar, VanityGrid);
+                SetupVanityGrid(uiCharacterCreation, player);
+                SetupScrollBar(uiCharacterCreation, _vanityScrollbar, _vanityGrid);
             };
 
             if (n == 0)
             {
                 CurrentOption = itemDefinitionOptionElement;
-                SetupVanityGrid(UICharacterCreation);
-                SetupScrollBar(UICharacterCreation, VanityScrollbar, VanityGrid);
+                SetupVanityGrid(uiCharacterCreation, player);
+                SetupScrollBar(uiCharacterCreation, _vanityScrollbar, _vanityGrid);
             }
         }
 
-        for (int n = 0; n < 9; n++)
+        for (var n = 0; n < 9; n++)
         {
             ItemDefinition itemDefinition = new(n switch
             {
@@ -510,8 +669,8 @@ public class CharCreationPreset : Mod
                 Left = StyleDimension.FromPixels(n * 45),
                 Top = StyleDimension.FromPixels(MathHelper.Lerp(-10, 65, factor))
             };
-            ItemPanel.Append(itemDefinitionOptionElement);
-            int k = n;
+            _itemPanel.Append(itemDefinitionOptionElement);
+            var k = n;
             itemDefinitionOptionElement.OnUpdate += delegate
             {
                 if (itemDefinitionOptionElement.Item.type != ItemID.None) return;
@@ -520,22 +679,22 @@ public class CharCreationPreset : Mod
             itemDefinitionOptionElement.OnLeftClick += delegate
             {
                 SoundEngine.PlaySound(SoundID.MenuTick);
-                VanityState = VanityState.Dye;
-                DyeState = (VanityState)k;
+                _vanityState = VanityState.Dye;
+                _dyeState = (VanityState)k;
                 CurrentOption = itemDefinitionOptionElement;
-                SetupVanityGrid(UICharacterCreation);
-                SetupScrollBar(UICharacterCreation, VanityScrollbar, VanityGrid);
+                SetupVanityGrid(uiCharacterCreation, player);
+                SetupScrollBar(uiCharacterCreation, _vanityScrollbar, _vanityGrid);
             };
         }
     }
 
-    static bool VanityCheck(VanityState state, Item targetItem)
+    private static bool VanityCheck(VanityState state, Item targetItem)
     {
         if (targetItem.type == ItemID.None)
             return true;
-        bool isPet = Main.vanityPet[targetItem.buffType];
-        bool isHairDye = targetItem.hairDye != -1;
-        bool isDye = targetItem.dye != 0;
+        var isPet = Main.vanityPet[targetItem.buffType];
+        var isHairDye = targetItem.hairDye != -1;
+        var isDye = targetItem.dye != 0;
         if (!targetItem.vanity && !isPet && !isHairDye && !isDye) return false;
         return state switch
         {
@@ -549,16 +708,18 @@ public class CharCreationPreset : Mod
         };
     }
 
-    static void VanitySet(VanityState state, Player player, Item targetItem, VanityState dyeState)
+    private static void VanitySet(VanityState state, Player player, Item targetItem, VanityState dyeState)
     {
         switch (state)
         {
             case VanityState.Pet:
                 player.miscEquips[0] = targetItem;
-                UpdatePets(currentPreviewChar);
+                UpdatePets(_currentPreviewChar);
                 break;
             case VanityState.HairDye:
                 player.hairDye = targetItem.hairDye;
+                if (player.hairDye == -1)
+                    player.hairDye = 0;
                 break;
             case VanityState.Dye:
                 switch (dyeState)
@@ -579,7 +740,7 @@ public class CharCreationPreset : Mod
         }
     }
 
-    static void FadedMouseOver(UIMouseEvent evt, UIElement listeningElement)
+    private static void FadedMouseOver(UIMouseEvent evt, UIElement listeningElement)
     {
         SoundEngine.PlaySound(SoundID.MenuTick);
         if (evt.Target is not UIPanel panel) return;
@@ -587,7 +748,7 @@ public class CharCreationPreset : Mod
         panel.BorderColor = Colors.FancyUIFatButtonMouseOver;
     }
 
-    static void FadedMouseOut(UIMouseEvent evt, UIElement listeningElement)
+    private static void FadedMouseOut(UIMouseEvent evt, UIElement listeningElement)
     {
         if (evt.Target is not UIPanel panel) return;
         panel.BackgroundColor = new Color(63, 82, 151) * 0.8f;

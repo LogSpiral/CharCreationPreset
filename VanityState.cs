@@ -1,6 +1,6 @@
 ﻿namespace CharCreationPreset;
 
-enum VanityState 
+internal enum VanityState 
 {
     Head,
     Body,

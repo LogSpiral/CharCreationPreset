@@ -11,7 +11,7 @@ namespace CharCreationPreset;
 
 public static class Utils
 {
-    static readonly int[] _validClothStyles = [
+    private static readonly int[] _validClothStyles = [
         0,
         2,
         1,
@@ -26,10 +26,10 @@ public static class Utils
 
     public static string PlayerSetAsJson(Player player)
     {
-        int[] itemVanityTypes = new int[8];
-        for (int n = 0; n < 8; n++)
+        var itemVanityTypes = new int[8];
+        for (var n = 0; n < 8; n++)
             itemVanityTypes[n] = player.armor[10 + n].vanity ? player.armor[10 + n].type : player.armor[n].vanity ? player.armor[n].type : 0;
-        return JsonConvert.SerializeObject(new Dictionary<string, object> {
+        var dictionary = new Dictionary<string, object> {
             { "version", 1 },
             { "hairStyle", player.hair },
             { "clothingStyle", player.skinVariant },
@@ -59,7 +59,11 @@ public static class Utils
             { "dyeAcc4",new ItemDefinition(player.dye[6].type)},
             { "dyeAcc5",new ItemDefinition(player.dye[7].type)},
             { "dyePet",new ItemDefinition(player.miscDyes[0].type)}
-        }, new JsonSerializerSettings
+        };
+        foreach (var pair in CharCreationPreset.PlayerSaveCallBacks)
+            pair.Value?.Invoke(dictionary, player);
+
+        return JsonConvert.SerializeObject(dictionary, new JsonSerializerSettings
         {
             TypeNameHandling = TypeNameHandling.Auto,
             MetadataPropertyHandling = MetadataPropertyHandling.ReadAhead,
@@ -69,22 +73,22 @@ public static class Utils
 
     public static void ApplyPlayerSetFromJson(string content, Player player)
     {
-        int num = content.IndexOf('{');
+        var num = content.IndexOf('{');
         if (num == -1)
             return;
 
         content = content.Substring(num);
-        int num2 = content.LastIndexOf('}');
+        var num2 = content.LastIndexOf('}');
         if (num2 == -1)
             return;
 
         content = content[..(num2 + 1)];
-        Dictionary<string, object> dictionary = JsonConvert.DeserializeObject<Dictionary<string, object>>((string)content);
+        var dictionary = JsonConvert.DeserializeObject<Dictionary<string, object>>((string)content);
         if (dictionary == null)
             return;
 
         Dictionary<string, object> dictionary2 = [];
-        foreach (KeyValuePair<string, object> item in dictionary)
+        foreach (var item in dictionary)
         {
             dictionary2[item.Key.ToLower()] = item.Value;
         }
@@ -94,14 +98,14 @@ public static class Utils
 
         if (dictionary2.TryGetValue("hairstyle", out value2))
         {
-            int num3 = (int)(long)value2;
+            var num3 = (int)(long)value2;
             if (Main.Hairstyles.AvailableHairstyles.Contains(num3))
                 player.hair = num3;
         }
 
         if (dictionary2.TryGetValue("clothingstyle", out value2))
         {
-            int num4 = (int)(long)value2;
+            var num4 = (int)(long)value2;
             if (_validClothStyles.Contains(num4))
                 player.skinVariant = num4;
         }
@@ -269,24 +273,28 @@ public static class Utils
         }
         else
             player.miscDyes[0] = new Item();
+
+
+        foreach (var pair in CharCreationPreset.PlayerReadCallBacks)
+            pair.Value?.Invoke(dictionary, player);
     }
 
-    static string GetHexText(Color pendingColor) => "#" + pendingColor.Hex3().ToUpper();
+    private static string GetHexText(Color pendingColor) => "#" + pendingColor.Hex3().ToUpper();
 
-    static Color ScaledHslToRgb(Vector3 hsl) => ScaledHslToRgb(hsl.X, hsl.Y, hsl.Z);
+    private static Color ScaledHslToRgb(Vector3 hsl) => ScaledHslToRgb(hsl.X, hsl.Y, hsl.Z);
 
-    static Color ScaledHslToRgb(float hue, float saturation, float luminosity) => Main.hslToRgb(hue, saturation, luminosity * 0.85f + 0.15f);
+    private static Color ScaledHslToRgb(float hue, float saturation, float luminosity) => Main.hslToRgb(hue, saturation, luminosity * 0.85f + 0.15f);
 
-    static bool GetHexColor(string hexString, out Vector3 hsl)
+    private static bool GetHexColor(string hexString, out Vector3 hsl)
     {
         if (hexString.StartsWith("#"))
             hexString = hexString.Substring(1);
 
         if (hexString.Length <= 6 && uint.TryParse(hexString, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out var result))
         {
-            uint b = result & 0xFFu;
-            uint g = (result >> 8) & 0xFFu;
-            uint r = (result >> 16) & 0xFFu;
+            var b = result & 0xFFu;
+            var g = (result >> 8) & 0xFFu;
+            var r = (result >> 16) & 0xFFu;
             hsl = RgbToScaledHsl(new Color((int)r, (int)g, (int)b));
             return true;
         }
@@ -295,9 +303,9 @@ public static class Utils
         return false;
     }
 
-    static Vector3 RgbToScaledHsl(Color color)
+    private static Vector3 RgbToScaledHsl(Color color)
     {
-        Vector3 value = Main.rgbToHsl(color);
+        var value = Main.rgbToHsl(color);
         value.Z = (value.Z - 0.15f) / 0.85f;
         return Vector3.Clamp(value, Vector3.Zero, Vector3.One);
     }

@@ -17,15 +17,13 @@ using Terraria.UI;
 namespace CharCreationPreset;
 public partial class UICharacterBox : UIElement
 {
-    readonly UIPanel _container;
-    readonly UICharacter _character;
-    readonly UIFocusInputTextField _fileName;
-    readonly UIImageButton _deleteButton;
-    readonly Player _player;
+    private readonly UIPanel _container;
+    private readonly UIFocusInputTextField _fileName;
+    private readonly UIImageButton _deleteButton;
 
-    string _oldName;
+    private string _oldName;
 
-    bool isFavorited;
+    private bool _isFavorite;
 
     public UICharacterBox(string filePath)
     {
@@ -34,9 +32,9 @@ public partial class UICharacterBox : UIElement
 
         var content = File.ReadAllText(filePath);
 
-        _player = new Player();
+        var player = new Player();
 
-        Utils.ApplyPlayerSetFromJson(content, _player);
+        Utils.ApplyPlayerSetFromJson(content, player);
 
         _container = new UIPanel()
         {
@@ -53,9 +51,9 @@ public partial class UICharacterBox : UIElement
             HAlign = .5f,
 
         };
-        isFavorited = CharCreationPreset.FavoritedPresets.Contains(_oldName);
+        _isFavorite = CharCreationPreset.FavoritePresets.Contains(_oldName);
         _fileName.SetText(_oldName);
-        string path = Path.GetDirectoryName(filePath);
+        var path = Path.GetDirectoryName(filePath) ?? "";
         _fileName.OnUnfocus += delegate
         {
             if (_fileName.CurrentString.Length == 0 || Path.GetInvalidFileNameChars().Intersect(_fileName.CurrentString).Any())
@@ -66,33 +64,27 @@ public partial class UICharacterBox : UIElement
             }
 
 
-            if (_oldName != _fileName.CurrentString)
+            if (_oldName == _fileName.CurrentString) return;
+            if (Directory.GetFiles(path).Any(fileName => Path.GetFileNameWithoutExtension(fileName) == _fileName.CurrentString))
             {
-                foreach (var fileName in Directory.GetFiles(path))
-                {
-                    if (Path.GetFileNameWithoutExtension(fileName) == _fileName.CurrentString)
-                    {
-                        _fileName.CurrentString = _oldName;
-                        SoundEngine.PlaySound(SoundID.Item62);
-                        return;
-                    }
-                }
-                SoundEngine.PlaySound(SoundID.ResearchComplete);
-                File.Move(Path.Combine(path, _oldName + ".json"), Path.Combine(path, _fileName.CurrentString + ".json"));
-                if (CharCreationPreset.FavoritedPresets.Remove(_oldName))
-                    CharCreationPreset.FavoritedPresets.Add(_fileName.CurrentString);
-                CharCreationPreset.SaveFavoritePresets();
-                _oldName = _fileName.CurrentString;
-                CharCreationPreset.pendingUpdatePreset = true;
-
+                _fileName.CurrentString = _oldName;
+                SoundEngine.PlaySound(SoundID.Item62);
+                return;
             }
+            SoundEngine.PlaySound(SoundID.ResearchComplete);
+            File.Move(Path.Combine(path, _oldName + ".json"), Path.Combine(path, _fileName.CurrentString + ".json"));
+            if (CharCreationPreset.FavoritePresets.Remove(_oldName))
+                CharCreationPreset.FavoritePresets.Add(_fileName.CurrentString);
+            CharCreationPreset.SaveFavoritePresets();
+            _oldName = _fileName.CurrentString;
+            CharCreationPreset.PendingUpdatePreset = true;
         };
         _container.Append(_fileName);
 
-        _character = new UICharacter(_player, true, false, 1f);
-        CharCreationPreset.UpdatePets(_character);
-        _container.Append(_character);
-        _character.VAlign = 1f;
+        var character = new UICharacter(player, true, false, 1f);
+        CharCreationPreset.UpdatePets(character);
+        _container.Append(character);
+        character.VAlign = 1f;
 
 
         _deleteButton = new UIImageButton(Main.Assets.Request<Texture2D>("Images/UI/ButtonDelete"))
@@ -104,9 +96,9 @@ public partial class UICharacterBox : UIElement
         {
             SoundEngine.PlaySound(SoundID.Dig);
             File.Delete(Path.Combine(path, _fileName.CurrentString + ".json"));
-            CharCreationPreset.pendingUpdatePreset = true;
+            CharCreationPreset.PendingUpdatePreset = true;
 
-            if (CharCreationPreset.FavoritedPresets.Remove(_fileName.CurrentString))
+            if (CharCreationPreset.FavoritePresets.Remove(_fileName.CurrentString))
                 CharCreationPreset.SaveFavoritePresets();
 
         };
@@ -115,7 +107,7 @@ public partial class UICharacterBox : UIElement
 
 
 
-        UIHorizontalSeparator separator = new UIHorizontalSeparator
+        var separator = new UIHorizontalSeparator
         {
             HAlign = .5f,
             Top = StyleDimension.FromPixels(20),
@@ -133,18 +125,19 @@ public partial class UICharacterBox : UIElement
         if (obj is not UICharacterBox otherBox || otherBox.ToString() is null) return 0;
 
         var name = ToString();
-        if (!(isFavorited ^ otherBox.isFavorited)) goto label;
-        else if (isFavorited && !otherBox.isFavorited) return -1;
+        if (!(_isFavorite ^ otherBox._isFavorite)) goto label;
+        else if (_isFavorite && !otherBox._isFavorite) return -1;
         else return 1;
+        label:
+        return ExtractNumber(name) > ExtractNumber(otherBox.ToString()) ? 1 : -1;
+
         static int ExtractNumber(string path)
         {
             if (path == null) return 0;
-            string fileName = Path.GetFileNameWithoutExtension(path);
+            var fileName = Path.GetFileNameWithoutExtension(path);
             var match = MatchNumber().Match(fileName);
             return match.Success ? int.Parse(match.Value) : 0;
         }
-    label:
-        return ExtractNumber(name) > ExtractNumber(otherBox.ToString()) ? 1 : -1;
     }
 
     [GeneratedRegex(@"\d+")]
@@ -169,16 +162,16 @@ public partial class UICharacterBox : UIElement
     {
         if (evt.Target != _fileName && evt.Target != _deleteButton)
         {
-            if (!CharCreationPreset.FavoritedPresets.Add(_oldName))
+            if (!CharCreationPreset.FavoritePresets.Add(_oldName))
             {
-                CharCreationPreset.FavoritedPresets.Remove(_oldName);
-                isFavorited = false;
+                CharCreationPreset.FavoritePresets.Remove(_oldName);
+                _isFavorite = false;
             }
             else
             {
-                isFavorited = true;
+                _isFavorite = true;
             }
-            CharCreationPreset.pendingUpdatePreset = true;
+            CharCreationPreset.PendingUpdatePreset = true;
             SoundEngine.PlaySound(SoundID.ResearchComplete);
             CharCreationPreset.SaveFavoritePresets();
         }
@@ -187,11 +180,9 @@ public partial class UICharacterBox : UIElement
     public override void DrawChildren(SpriteBatch spriteBatch)
     {
         base.DrawChildren(spriteBatch);
-        if (isFavorited)
-        {
-            var dimension = GetDimensions();
-            spriteBatch.Draw(TextureAssets.Cursors[3].Value, dimension.Position(), Color.White);
-        }
+        if (!_isFavorite) return;
+        var dimension = GetDimensions();
+        spriteBatch.Draw(TextureAssets.Cursors[3].Value, dimension.Position(), Color.White);
     }
 }
 
