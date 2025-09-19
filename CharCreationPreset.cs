@@ -1,13 +1,17 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using MonoMod.Cil;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using ReLogic.Content;
 using ReLogic.OS;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Terraria;
 using Terraria.Audio;
@@ -21,12 +25,10 @@ using Terraria.Localization;
 using Terraria.ModLoader;
 using Terraria.ModLoader.Config;
 using Terraria.ModLoader.Config.UI;
+using Terraria.ModLoader.Default;
 using Terraria.ModLoader.UI;
 using Terraria.ModLoader.UI.Elements;
 using Terraria.UI;
-using System.Reflection;
-using MonoMod.Cil;
-using System.Collections;
 
 namespace CharCreationPreset;
 
@@ -88,13 +90,13 @@ public class CharCreationPreset : Mod
 
     static void MrPlagueRacesSupport()
     {
-        if (!ModContent.TryFind<ModSystem>("MrPlagueRaces", "UIRedirectionSystem", out var system)) 
+        if (!ModContent.TryFind<ModSystem>("MrPlagueRaces", "UIRedirectionSystem", out var system))
             return;
         var assembly = system.GetType().Assembly;
 
         var MrPlagueUICharacterCreationType = (from type in assembly.GetTypes() where type.Name == "MrPlagueUICharacterCreation" select type).First();
         var _playerInfo = MrPlagueUICharacterCreationType.GetField("_player", BindingFlags.Instance | BindingFlags.NonPublic);
-        MonoModHooks.Modify(MrPlagueUICharacterCreationType.GetMethod("MakeCharPreview", BindingFlags.NonPublic | BindingFlags.Instance), il => 
+        MonoModHooks.Modify(MrPlagueUICharacterCreationType.GetMethod("MakeCharPreview", BindingFlags.NonPublic | BindingFlags.Instance), il =>
         {
             var cursor = new ILCursor(il);
             if (!cursor.TryGotoNext(i => i.MatchRet())) return;
@@ -104,13 +106,13 @@ public class CharCreationPreset : Mod
             cursor.EmitLdarg1();
             cursor.EmitLdarg0();
             cursor.EmitLdfld(_playerInfo);
-            cursor.EmitDelegate<Action<UIElement,Player>>((element,player) => MakePetPreviewInternal(element,player));
+            cursor.EmitDelegate<Action<UIElement, Player>>((element, player) => MakePetPreviewInternal(element, player));
         });
 
         MonoModHooks.Modify(system.GetType().GetMethod("InterceptCharacterCreationMenu", BindingFlags.NonPublic | BindingFlags.Instance), il =>
         {
             var cursor = new ILCursor(il);
-            if (!cursor.TryGotoNext(i => i.MatchLdcI4(888))) 
+            if (!cursor.TryGotoNext(i => i.MatchLdcI4(888)))
                 return;
             cursor.Index += 6;
             cursor.EmitDelegate<Action>(() =>
@@ -130,7 +132,7 @@ public class CharCreationPreset : Mod
             dict["MrPlagueRaces/detailColorG"] = detailColor.G;
             dict["MrPlagueRaces/detailColorB"] = detailColor.B;
         };
-        var raceLoaderType = (from type in assembly.GetTypes()where type.Name == "RaceLoader" select type).First();
+        var raceLoaderType = (from type in assembly.GetTypes() where type.Name == "RaceLoader" select type).First();
         var methods = (from method in raceLoaderType.GetMethods() where method.Name == "TryGetRace" && method.GetParameters()[0].ParameterType == typeof(string) select method).First();
         var mplrInstance = ModContent.Find<ModPlayer>("MrPlagueRaces/MrPlagueRacesPlayer");
         var raceFldInfo = mplrInstance.GetType().GetField("race", BindingFlags.Instance | BindingFlags.Public);
@@ -619,25 +621,20 @@ public class CharCreationPreset : Mod
                 8 => player.miscEquips[0].type,
                 9 or _ => GameShaders.Hair._shaderLookupDictionary.FirstOrDefault(pair => pair.Value == player.hairDye).Key
             });
-            ItemDefinitionOptionElement itemDefinitionOptionElement = new(itemDefinition)
+            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition,n switch 
+            {
+                0=>VanityState.Head,
+                1=>VanityState.Body,
+                2=>VanityState.Leg,
+                8=>VanityState.Pet,
+                9=>VanityState.HairDye,
+                _=>VanityState.Acc1
+            })
             {
                 Left = StyleDimension.FromPixels(n * 45),
                 Top = StyleDimension.FromPixels(MathHelper.Lerp(-40, 10, factor))
             };
             var k = n;
-            itemDefinitionOptionElement.OnUpdate += delegate
-            {
-                if (itemDefinitionOptionElement.Item.type != ItemID.None) return;
-                itemDefinitionOptionElement.SetItem(new ItemDefinition(k switch
-                {
-                    0 => ModContent.ItemType<VanityHeadDummy>(),
-                    1 => ModContent.ItemType<VanityBodyDummy>(),
-                    2 => ModContent.ItemType<VanityLegDummy>(),
-                    8 => ModContent.ItemType<VanityPetDummy>(),
-                    9 => ModContent.ItemType<VanityHairDyeDummy>(),
-                    _ => ModContent.ItemType<VanityAccDummy>()
-                }));
-            };
             _itemPanel.Append(itemDefinitionOptionElement);
 
             itemDefinitionOptionElement.OnLeftClick += delegate
@@ -664,18 +661,14 @@ public class CharCreationPreset : Mod
                 < 8 => player.dye[n].type,
                 8 or _ => player.miscDyes[0].type
             });
-            ItemDefinitionOptionElement itemDefinitionOptionElement = new(itemDefinition)
+            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition,VanityState.Dye)
             {
                 Left = StyleDimension.FromPixels(n * 45),
                 Top = StyleDimension.FromPixels(MathHelper.Lerp(-10, 65, factor))
             };
             _itemPanel.Append(itemDefinitionOptionElement);
             var k = n;
-            itemDefinitionOptionElement.OnUpdate += delegate
-            {
-                if (itemDefinitionOptionElement.Item.type != ItemID.None) return;
-                itemDefinitionOptionElement.SetItem(new ItemDefinition(ModContent.ItemType<VanityDyeDummy>()));
-            };
+
             itemDefinitionOptionElement.OnLeftClick += delegate
             {
                 SoundEngine.PlaySound(SoundID.MenuTick);
@@ -755,7 +748,51 @@ public class CharCreationPreset : Mod
         panel.BorderColor = Color.Black;
     }
 }
+public class CharCreationItemOptionElement : ItemDefinitionOptionElement
+{
+    internal CharCreationItemOptionElement(ItemDefinition definition, VanityState vanityState, float scale = 0.75F) : base(definition, scale)
+    {
+        State = vanityState;
+    }
+    VanityState State { get; }
 
+    public override void DrawSelf(SpriteBatch spriteBatch)
+    {
+        base.DrawSelf(spriteBatch);
 
+        if (Item.type == ItemID.None)
+        {
+            CalculatedStyle innerDimensions = GetInnerDimensions();
+
+            Texture2D value = (State switch
+            {
+                VanityState.Head => ModAsset.VanityHeadDummy,
+                VanityState.Body => ModAsset.VanityBodyDummy,
+                VanityState.Leg => ModAsset.VanityLegDummy,
+                VanityState.HairDye => ModAsset.VanityHairDyeDummy,
+                VanityState.Dye => ModAsset.VanityDyeDummy,
+                VanityState.Pet => ModAsset.VanityPetDummy,
+                _ => ModAsset.VanityAccDummy
+            }).Value;
+
+            Rectangle rectangle = value.Frame();
+            Color currentColor = Color.White;
+            float scale = 1f;
+            ItemSlot.GetItemLight(ref currentColor, ref scale, Item);
+            int height = rectangle.Height;
+            int width = rectangle.Width;
+            float num2 = 1f;
+            float num3 = DefaultBackgroundTexture.Width() * Scale;
+            if (width > num3 || height > num3)
+                num2 = (width <= height) ? (num3 / height) : (num3 / width);
+            num2 *= Scale;
+            Vector2 vector = BackgroundTexture.Size() * Scale;
+            Vector2 position = innerDimensions.Position() + vector / 2f;
+            Vector2 origin = rectangle.Size() / 2f;
+
+            spriteBatch.Draw(value, position, rectangle, Item.GetAlpha(currentColor), 0f, origin, num2 * scale, SpriteEffects.None, 0f);
+        }
+    }
+}
 
 
