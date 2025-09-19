@@ -1,5 +1,6 @@
 ﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ReLogic.Content;
 using System;
 using System.IO;
 using System.Linq;
@@ -24,12 +25,12 @@ public partial class UICharacterBox : UIElement
     private string _oldName;
 
     private bool _isFavorite;
-
+    private Asset<Texture2D> DeleteIcon { get; } = Main.Assets.Request<Texture2D>("Images/UI/ButtonDelete");
     public UICharacterBox(string filePath)
     {
-        Width = StyleDimension.FromPixels(90);
-        Height = StyleDimension.FromPixels(100);
 
+        Width = StyleDimension.FromPercent(.239f);
+        Height = StyleDimension.FromPixels(100);
         var content = File.ReadAllText(filePath);
 
         var player = new Player();
@@ -39,7 +40,9 @@ public partial class UICharacterBox : UIElement
         _container = new UIPanel()
         {
             Width = StyleDimension.FromPercent(1),
-            Height = StyleDimension.FromPercent(1)
+            Height = StyleDimension.FromPercent(1),
+            BackgroundColor = Color.Black * .25f,
+            BorderColor = default
         };
         Append(_container);
         _oldName = Path.GetFileNameWithoutExtension(filePath);
@@ -48,8 +51,7 @@ public partial class UICharacterBox : UIElement
             Width = StyleDimension.FromPercent(1),
             Height = StyleDimension.FromPixels(30),
             Top = StyleDimension.FromPixels(-5),
-            HAlign = .5f,
-
+            HAlign = .5f
         };
         _isFavorite = CharCreationPreset.FavoritePresets.Contains(_oldName);
         _fileName.SetText(_oldName);
@@ -87,7 +89,7 @@ public partial class UICharacterBox : UIElement
         character.VAlign = 1f;
 
 
-        _deleteButton = new UIImageButton(Main.Assets.Request<Texture2D>("Images/UI/ButtonDelete"))
+        _deleteButton = new UIImageButton(DeleteIcon)
         {
             HAlign = 1,
             VAlign = 1
@@ -145,15 +147,15 @@ public partial class UICharacterBox : UIElement
 
     public override void MouseOut(UIMouseEvent evt)
     {
-        _container.BackgroundColor = new Color(63, 82, 151) * 0.8f;
-        _container.BorderColor = Color.Black;
+        _container.BackgroundColor = Color.Black * .25f;
+        _container.BorderColor = default;
         base.MouseOut(evt);
     }
 
     public override void MouseOver(UIMouseEvent evt)
     {
         SoundEngine.PlaySound(SoundID.MenuTick);
-        _container.BackgroundColor = new Color(73, 94, 171);
+        _container.BackgroundColor = Color.Black * .1f;
         _container.BorderColor = Colors.FancyUIFatButtonMouseOver;
         base.MouseOver(evt);
     }
@@ -182,7 +184,7 @@ public partial class UICharacterBox : UIElement
         base.DrawChildren(spriteBatch);
         if (!_isFavorite) return;
         var dimension = GetDimensions();
-        spriteBatch.Draw(TextureAssets.Cursors[3].Value, dimension.Position(), Color.White);
+        spriteBatch.Draw(TextureAssets.Cursors[3].Value, dimension.Position(), Color.White * .5f);
     }
 }
 

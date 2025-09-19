@@ -287,8 +287,8 @@ public static class Utils
 
     private static bool GetHexColor(string hexString, out Vector3 hsl)
     {
-        if (hexString.StartsWith("#"))
-            hexString = hexString.Substring(1);
+        if (hexString.StartsWith('#'))
+            hexString = hexString[1..];
 
         if (hexString.Length <= 6 && uint.TryParse(hexString, NumberStyles.HexNumber, CultureInfo.CurrentCulture, out var result))
         {

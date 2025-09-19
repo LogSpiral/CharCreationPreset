@@ -210,12 +210,12 @@ public class CharCreationPreset : Mod
 
         return element;
     }
-
+    private static Asset<Texture2D> CopyIcon { get; } = Main.Assets.Request<Texture2D>("Images/UI/CharCreation/Copy");
     private static void AddCopyButton(On_UICharacterListItem.orig_AddTmlElements orig, UICharacterListItem self, Terraria.IO.PlayerFileData data)
     {
         orig.Invoke(self, data);
 
-        var uIImageButton5 = new UIImageButton(Main.Assets.Request<Texture2D>("Images/UI/CharCreation/Copy"))
+        var uIImageButton5 = new UIImageButton(CopyIcon)
         {
             VAlign = 1f,
             HAlign = 1f,
@@ -426,7 +426,7 @@ public class CharCreationPreset : Mod
         //var bounds = Main.instance.Window.ClientBounds;
         var h = Math.Min(125f, Main.screenHeight - 670f);
         var factor = h / 125f;
-        var height = MathHelper.Lerp(40, 125, factor);
+        var height = MathHelper.Lerp(40, 115, factor);
         var yOffset = MathHelper.Lerp(-20, 0, factor);
         var basePanel = _itemPanel = new()
         {
@@ -531,7 +531,6 @@ public class CharCreationPreset : Mod
     private static void SetupPresetGrid(UIElement uiCharacterCreation, Player player)
     {
         if (_presetGrid == null) return;
-
         _presetGrid.Clear();
         var searchText = _presetSearchBar?.CurrentString;
         var skip = string.IsNullOrEmpty(searchText);
@@ -541,7 +540,7 @@ public class CharCreationPreset : Mod
         foreach (var file in files)
         {
             if (Path.GetExtension(file) != ".json") continue;
-            if (!skip && !Path.GetFileNameWithoutExtension(file).ToLower().Contains(searchText.ToLower())) continue;
+            if (!skip && !Path.GetFileNameWithoutExtension(file).Contains(searchText, StringComparison.CurrentCultureIgnoreCase)) continue;
             var characterBox = new UICharacterBox(file);
 
             characterBox.OnLeftClick += (evt, elem) =>
@@ -570,6 +569,7 @@ public class CharCreationPreset : Mod
         var searchText = _vanitySearchBar?.CurrentString;
         var skip = string.IsNullOrEmpty(searchText);
         var dummyItem = new Item();
+        var mSize = Math.Min(400, Main.screenWidth * .5f - 340f) - 60f;
         for (var n = 0; n < ItemLoader.ItemCount; n++)
         {
             dummyItem.SetDefaults(n);
@@ -579,7 +579,8 @@ public class CharCreationPreset : Mod
             if (!skip && !dummyItem.Name.ToLower().Contains(searchText.ToLower()))
                 continue;
             ItemDefinition itemDefinition = new(n);
-            ItemDefinitionOptionElement itemDefinitionOption = new(itemDefinition, .8f);
+            
+            NameDisplayItemOptionElement itemDefinitionOption = new(itemDefinition, mSize / 52f / 8f);
             _vanityGrid.Add(itemDefinitionOption);
             var clone = dummyItem.Clone();
             itemDefinitionOption.OnLeftClick += delegate
@@ -621,18 +622,18 @@ public class CharCreationPreset : Mod
                 8 => player.miscEquips[0].type,
                 9 or _ => GameShaders.Hair._shaderLookupDictionary.FirstOrDefault(pair => pair.Value == player.hairDye).Key
             });
-            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition,n switch 
+            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition, n switch
             {
-                0=>VanityState.Head,
-                1=>VanityState.Body,
-                2=>VanityState.Leg,
-                8=>VanityState.Pet,
-                9=>VanityState.HairDye,
-                _=>VanityState.Acc1
+                0 => VanityState.Head,
+                1 => VanityState.Body,
+                2 => VanityState.Leg,
+                8 => VanityState.Pet,
+                9 => VanityState.HairDye,
+                _ => VanityState.Acc1
             })
             {
-                Left = StyleDimension.FromPixels(n * 45),
-                Top = StyleDimension.FromPixels(MathHelper.Lerp(-40, 10, factor))
+                HAlign = n / 9f,
+                VAlign = 0f
             };
             var k = n;
             _itemPanel.Append(itemDefinitionOptionElement);
@@ -661,10 +662,10 @@ public class CharCreationPreset : Mod
                 < 8 => player.dye[n].type,
                 8 or _ => player.miscDyes[0].type
             });
-            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition,VanityState.Dye)
+            CharCreationItemOptionElement itemDefinitionOptionElement = new(itemDefinition, VanityState.Dye)
             {
-                Left = StyleDimension.FromPixels(n * 45),
-                Top = StyleDimension.FromPixels(MathHelper.Lerp(-10, 65, factor))
+                HAlign = n / 8f,
+                VAlign = 1f,
             };
             _itemPanel.Append(itemDefinitionOptionElement);
             var k = n;
@@ -685,7 +686,7 @@ public class CharCreationPreset : Mod
     {
         if (targetItem.type == ItemID.None)
             return true;
-        var isPet = Main.vanityPet[targetItem.buffType];
+        var isPet = Main.vanityPet[targetItem.buffType] && targetItem.type != ItemID.ChesterPetItem;
         var isHairDye = targetItem.hairDye != -1;
         var isDye = targetItem.dye != 0;
         if (!targetItem.vanity && !isPet && !isHairDye && !isDye) return false;
@@ -748,6 +749,15 @@ public class CharCreationPreset : Mod
         panel.BorderColor = Color.Black;
     }
 }
+public class NameDisplayItemOptionElement(ItemDefinition definition, float scale = 0.75F) : ItemDefinitionOptionElement(definition, scale) 
+{
+    public override void DrawSelf(SpriteBatch spriteBatch)
+    {
+        base.DrawSelf(spriteBatch);
+        if (IsMouseHovering)
+            UICommon.TooltipMouseText(Item.HoverName);
+    }
+}
 public class CharCreationItemOptionElement : ItemDefinitionOptionElement
 {
     internal CharCreationItemOptionElement(ItemDefinition definition, VanityState vanityState, float scale = 0.75F) : base(definition, scale)
@@ -759,7 +769,6 @@ public class CharCreationItemOptionElement : ItemDefinitionOptionElement
     public override void DrawSelf(SpriteBatch spriteBatch)
     {
         base.DrawSelf(spriteBatch);
-
         if (Item.type == ItemID.None)
         {
             CalculatedStyle innerDimensions = GetInnerDimensions();
@@ -792,6 +801,8 @@ public class CharCreationItemOptionElement : ItemDefinitionOptionElement
 
             spriteBatch.Draw(value, position, rectangle, Item.GetAlpha(currentColor), 0f, origin, num2 * scale, SpriteEffects.None, 0f);
         }
+        else if (IsMouseHovering)
+            UICommon.TooltipMouseText(Item.HoverName);
     }
 }
 
