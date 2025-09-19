@@ -9,6 +9,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -109,7 +110,7 @@ public class CharCreationPreset : Mod
             cursor.EmitDelegate<Action<UIElement, Player>>((element, player) => MakePetPreviewInternal(element, player));
         });
 
-        MonoModHooks.Modify(system.GetType().GetMethod("InterceptCharacterCreationMenu", BindingFlags.NonPublic | BindingFlags.Instance), il =>
+        MonoModHooks.Modify(system.GetType().GetMethod("InterceptMenus", BindingFlags.NonPublic | BindingFlags.Instance), il =>
         {
             var cursor = new ILCursor(il);
             if (!cursor.TryGotoNext(i => i.MatchLdcI4(888)))
@@ -121,7 +122,19 @@ public class CharCreationPreset : Mod
             });
         });
 
-
+        MonoModHooks.Modify(MrPlagueUICharacterCreationType.GetMethod("MakeCharPreview", BindingFlags.NonPublic | BindingFlags.Instance), il =>
+        {
+            var cursor = new ILCursor(il);
+            cursor.Index += 2;
+            cursor.EmitDelegate(() =>
+            {
+                var stack = new StackTrace();
+                var f = stack.GetFrame(5);
+                var fs = stack.GetFrames();
+                if (!f.ToString().Contains("RaceSelect") && !fs[6].ToString().Contains("Draw"))
+                    BuildPresetListInternal(Main.MenuUI.CurrentState, Main.PendingPlayer);
+            });
+        });
 
         PlayerSaveCallBacks["MrPlagueRacesSave"] = (dict, player) =>
         {
@@ -306,13 +319,17 @@ public class CharCreationPreset : Mod
         var width = Math.Min(400, Main.screenWidth * .5f - 340f);
         var offsetX = -(400 - width) * .5f;
         float height = Math.Min(600, Main.screenHeight - 180);
-
+        var mOff = 0f;
+        if (self.ToString().Contains("Mr")) 
+        {
+            mOff = 40;
+        }
         UIPanel presetContainer = new()
         {
             Width = StyleDimension.FromPixels(width),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150f),
-            Left = StyleDimension.FromPixels(480f + offsetX),
+            Left = StyleDimension.FromPixels(480f + offsetX + mOff),
             HAlign = .5f,
             VAlign = 0f,
         };
@@ -336,7 +353,7 @@ public class CharCreationPreset : Mod
             Width = StyleDimension.FromPixels(32),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150),
-            Left = StyleDimension.FromPixels(700 + offsetX * 2),
+            Left = StyleDimension.FromPixels(700 + offsetX * 2 + mOff),
             HAlign = .5f,
             VAlign = 0f,
 
@@ -350,7 +367,7 @@ public class CharCreationPreset : Mod
             Width = StyleDimension.FromPixels(400f),
             Height = StyleDimension.FromPixels(40),
             Top = StyleDimension.FromPixels(120f),
-            Left = StyleDimension.FromPixels(480f),
+            Left = StyleDimension.FromPixels(480f + mOff),
             HAlign = .5f,
             VAlign = 0f,
         };
@@ -367,13 +384,17 @@ public class CharCreationPreset : Mod
         var width = Math.Min(400, Main.screenWidth * .5f - 340f);
         var offsetX = (400f - width) * .5f;
         float height = Math.Min(600, Main.screenHeight - 180);
-
+        var mOff = 0f;
+        if (self.ToString().Contains("Mr"))
+        {
+            mOff = -40;
+        }
         UIPanel vanityContainer = new()
         {
             Width = StyleDimension.FromPixels(width),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150f),
-            Left = StyleDimension.FromPixels(-480f + offsetX),
+            Left = StyleDimension.FromPixels(-480f + offsetX + mOff),
             HAlign = .5f,
             VAlign = 0f,
         };
@@ -397,7 +418,7 @@ public class CharCreationPreset : Mod
             Width = StyleDimension.FromPixels(32),
             Height = StyleDimension.FromPixels(height),
             Top = StyleDimension.FromPixels(150),
-            Left = StyleDimension.FromPixels(-700 + offsetX * 2),
+            Left = StyleDimension.FromPixels(-700 + offsetX * 2 + mOff),
             HAlign = .5f,
             VAlign = 0f,
 
@@ -410,7 +431,7 @@ public class CharCreationPreset : Mod
             Width = StyleDimension.FromPixels(400f),
             Height = StyleDimension.FromPixels(40),
             Top = StyleDimension.FromPixels(120f),
-            Left = StyleDimension.FromPixels(-480f + offsetX * 2),
+            Left = StyleDimension.FromPixels(-480f + offsetX * 2 + mOff),
             HAlign = .5f,
             VAlign = 0f,
         };
@@ -579,7 +600,7 @@ public class CharCreationPreset : Mod
             if (!skip && !dummyItem.Name.ToLower().Contains(searchText.ToLower()))
                 continue;
             ItemDefinition itemDefinition = new(n);
-            
+
             NameDisplayItemOptionElement itemDefinitionOption = new(itemDefinition, mSize / 52f / 8f);
             _vanityGrid.Add(itemDefinitionOption);
             var clone = dummyItem.Clone();
@@ -749,7 +770,7 @@ public class CharCreationPreset : Mod
         panel.BorderColor = Color.Black;
     }
 }
-public class NameDisplayItemOptionElement(ItemDefinition definition, float scale = 0.75F) : ItemDefinitionOptionElement(definition, scale) 
+public class NameDisplayItemOptionElement(ItemDefinition definition, float scale = 0.75F) : ItemDefinitionOptionElement(definition, scale)
 {
     public override void DrawSelf(SpriteBatch spriteBatch)
     {
